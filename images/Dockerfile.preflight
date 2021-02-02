@@ -1,0 +1,4 @@
+FROM quay.io/jetstack/preflight:v0.1.27
+
+COPY LICENSES.txt /
+COPY thirdparty /
