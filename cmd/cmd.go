@@ -3,7 +3,10 @@ package cmd
 import (
 	"fmt"
 	"github.com/jakexks/go-providence-checker/pkg/checker"
+	"github.com/jakexks/go-providence-checker/pkg/dirutil"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -26,11 +29,7 @@ var (
 				return err
 			}
 			defer s.Cleanup()
-			license, ltype, err := s.Check(args[0])
-			if err == nil {
-				fmt.Printf("%s has license %s (%s)\n", args[0], license, ltype)
-			}
-			return err
+			return s.Check(args[0])
 		},
 	}
 	checkAll = &cobra.Command{
@@ -44,8 +43,46 @@ var (
 			}
 			defer s.Cleanup()
 			list, err := s.ListAll()
+			if err != nil {
+				return err
+			}
+			output, err := os.OpenFile("LICENSES.txt", os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+			if err != nil {
+				return err
+			}
+			defer output.Close()
+			seen := make(map[string]struct{})
 			for _, l := range list {
-				fmt.Println(l)
+				licenseInfo, err := s.Classify(l)
+				if err != nil {
+					if err == checker.ErrNoLicenseFound {
+						fmt.Printf("module %s@%s: no license detected, check + add manually\n\n", l.Path, l.Version)
+					} else {
+						return err
+					}
+				}
+				for _, li := range licenseInfo {
+					mod := fmt.Sprintf("%s@%s", li.LibraryName, li.LibraryVersion)
+					if _, found := seen[mod]; found {
+						continue
+					}
+					seen[mod] = struct{}{}
+					fmt.Printf("module %s: %s (%s)\n", mod, li.LicenseName, li.LicenseType)
+					output.Write([]byte(fmt.Sprintf("Library %s used under the %s License, reproduced below:\n\n", mod, li.LicenseName)))
+					license, err := ioutil.ReadFile(li.LicenseFile)
+					if err != nil {
+						return err
+					}
+					output.Write(license)
+					output.Write([]byte("\n==============================\n\n"))
+					switch li.LicenseType {
+					case "CDDL", "EPL", "GPL", "LGPL", "MPL":
+						os.MkdirAll("thirdparty", 0755)
+						if err := dirutil.CopyDirectory(li.SourceDir, filepath.Join("thirdparty", li.LibraryName)); err != nil {
+							return err
+						}
+					}
+				}
 			}
 			return err
 		},

@@ -2,27 +2,70 @@ package checker
 
 import (
 	"errors"
-	"github.com/google/go-licenses/licenses"
+	"fmt"
+	"github.com/google/licenseclassifier"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
-var ErrNoLicenseFound = errors.New("no license found")
+var (
+	possibleLicense   = regexp.MustCompile(`^(?i)(LICEN(S|C)E|COPYING|README|NOTICE)(\\..+)?$`)
+	ErrNoLicenseFound = errors.New("no license found")
+)
 
-func (s *State) classify(info *GoModuleInfo) (string, licenses.Type, error) {
-	licenseFile, err := licenses.Find(info.Dir, s.classifier)
-	if err != nil {
-		s.log.Infof("Trying %s", filepath.Join(info.Dir, "LICENSE"))
-		if f, err := os.Open(filepath.Join(info.Dir, "LICENSE")); err == nil {
-			f.Close()
-			return s.classifier.Identify(filepath.Join(info.Dir, "LICENSE"))
+type LicenseInfo struct {
+	LibraryName    string
+	LibraryVersion string
+	LicenseFile    string
+	SourceDir      string
+	LinkToLicense  string
+	LicenseName    string
+	LicenseType    string
+}
+
+func (s *State) Classify(info *GoModuleInfo) ([]LicenseInfo, error) {
+	var licenseFiles []string
+	var licenses []LicenseInfo
+	if err := filepath.Walk(info.Dir, func(path string, fileInfo os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
-		s.log.Infof("Trying %s", filepath.Join(info.Dir, "LICENCE"))
-		if f, err := os.Open(filepath.Join(info.Dir, "LICENCE")); err == nil {
-			f.Close()
-			return s.classifier.Identify(filepath.Join(info.Dir, "LICENCE"))
+		if !fileInfo.IsDir() {
+			if possibleLicense.MatchString(fileInfo.Name()) {
+				licenseFiles = append(licenseFiles, path)
+			}
 		}
-		return "", "", err
+		return nil
+	}); err != nil {
+		return licenses, err
 	}
-	return s.classifier.Identify(licenseFile)
+	for _, licenseFile := range licenseFiles {
+		content, err := ioutil.ReadFile(licenseFile)
+		if err != nil {
+			return licenses, err
+		}
+		matches := s.classifier.Match(content)
+		for _, m := range matches {
+			licenses = append(licenses, LicenseInfo{
+				LibraryName:    info.Path,
+				LibraryVersion: info.Version,
+				LicenseFile:    licenseFile,
+				LicenseType:    licenseclassifier.LicenseType(m.Name),
+				SourceDir:      info.Dir,
+				LinkToLicense:  createLink(info.Path, info.Version, strings.TrimPrefix(licenseFile, info.Dir+"/")),
+				LicenseName:    m.Name,
+			})
+		}
+	}
+	if len(licenses) == 0 {
+		return nil, ErrNoLicenseFound
+	}
+	return licenses, nil
+}
+
+func createLink(modulename, moduleversion, licensePath string) string {
+	return fmt.Sprintf("https://%s/tree/%s/%s", modulename, moduleversion, licensePath)
 }

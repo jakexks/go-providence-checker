@@ -3,8 +3,7 @@ package checker
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"github.com/google/go-licenses/licenses"
+	classifier "github.com/google/licenseclassifier/v2"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"io"
@@ -14,7 +13,7 @@ import (
 
 type State struct {
 	log                         *zap.SugaredLogger
-	classifier                  licenses.Classifier
+	classifier                  *classifier.Classifier
 	goPath, goCache, workingDir string
 }
 
@@ -25,11 +24,10 @@ func (s *State) Init(module string) error {
 	}
 	s.log = logger.Sugar()
 
-	c, err := licenses.NewClassifier(1)
-	if err != nil {
+	s.classifier = classifier.NewClassifier(0.2)
+	if err := s.classifier.LoadLicenses("./licenses"); err != nil {
 		return err
 	}
-	s.classifier = c
 
 	s.log.Info("Creating Temporary Directories")
 	goPath, err := newTempDir()
@@ -68,7 +66,7 @@ func (s *State) Init(module string) error {
 		}
 	}
 	cmd = s.buildCmd("go", "mod", "download")
-	s.log.Info("Downloading dependencies")
+	s.log.Info("Downloading transitive dependencies")
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		s.Cleanup()
@@ -79,32 +77,35 @@ func (s *State) Init(module string) error {
 }
 
 func (s *State) Cleanup() {
-	//os.RemoveAll(s.goCache)
-	//os.RemoveAll(s.goPath)
-	//os.RemoveAll(s.workingDir)
+	os.RemoveAll(s.goCache)
+	os.RemoveAll(s.goPath)
+	os.RemoveAll(s.workingDir)
 }
 
-func (s *State) Check(module string) (string, licenses.Type, error) {
-	cmd := s.buildCmd("go", "list", "-m", "-json", module)
-	out, err := cmd.CombinedOutput()
+func (s *State) Check(module string) error {
+	info, err := s.GoModInfo(module)
 	if err != nil {
-		return "", "", err
+		return err
 	}
-	info := new(GoModuleInfo)
-	if err := json.Unmarshal(out, info); err != nil {
-		return "", "", err
+	licenses, err := s.Classify(info)
+	if err != nil {
+		return err
 	}
-	return s.classify(info)
+	s.log.Infof("The following licenses were found:")
+	for _, li := range licenses {
+		s.log.Infof("%s %s (%s)", li.LicenseFile, li.LicenseName, li.LicenseType)
+	}
+	return err
 }
 
-func (s *State) ListAll() ([]string, error) {
-	var output []string
+func (s *State) ListAll() ([]*GoModuleInfo, error) {
+	var allModules []*GoModuleInfo
 	cmd := s.buildCmd("go", "list", "-m", "all")
 	buf := new(bytes.Buffer)
 	cmd.Stdout = buf
 	err := cmd.Run()
 	if err != nil {
-		return output, err
+		return nil, err
 	}
 	// discard first line
 	buf.ReadString('\n')
@@ -114,14 +115,27 @@ func (s *State) ListAll() ([]string, error) {
 			if err == io.EOF {
 				break
 			}
-			return output, err
+			return nil, err
 		}
 		mod := strings.Join(strings.Split(strings.TrimSpace(line), " "), "@")
-		if license, ltype, err := s.Check(mod); err != nil {
-			s.log.Infof("%s: %s", mod, err)
-		} else {
-			output = append(output, fmt.Sprintf("%s %s (%s)", mod, license, ltype))
+		info, err := s.GoModInfo(mod)
+		if err != nil {
+			return nil, err
 		}
+		allModules = append(allModules, info)
 	}
-	return output, nil
+	return allModules, nil
+}
+
+func (s *State) GoModInfo(module string) (*GoModuleInfo, error) {
+	cmd := s.buildCmd("go", "list", "-m", "-json", module)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	info := new(GoModuleInfo)
+	if err := json.Unmarshal(out, info); err != nil {
+		return info, err
+	}
+	return info, nil
 }

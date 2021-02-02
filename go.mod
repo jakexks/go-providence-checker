@@ -4,11 +4,11 @@ go 1.15
 
 require (
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
-	github.com/google/go-cmp v0.4.1 // indirect
 	github.com/google/go-licenses v0.0.0-20201026145851-73411c8fa237
-	github.com/kr/pretty v0.2.1 // indirect
+	github.com/google/licenseclassifier v0.0.0-20190926221455-842c0d70d702
+	github.com/google/licenseclassifier/v2 v2.0.0-alpha.1
+	github.com/kr/pretty v0.2.1
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/sergi/go-diff v1.1.0 // indirect
 	github.com/smartystreets/assertions v1.2.0 // indirect
 	github.com/spf13/afero v1.2.2 // indirect
 	github.com/spf13/cobra v1.1.1
