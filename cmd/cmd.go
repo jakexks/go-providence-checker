@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"github.com/jakexks/go-providence-checker/pkg/checker"
 	"os"
 	"strings"
@@ -25,7 +26,11 @@ var (
 				return err
 			}
 			defer s.Cleanup()
-			return s.Check(args[0])
+			license, ltype, err := s.Check(args[0])
+			if err == nil {
+				fmt.Printf("%s has license %s (%s)\n", args[0], license, ltype)
+			}
+			return err
 		},
 	}
 	checkAll = &cobra.Command{
@@ -38,7 +43,10 @@ var (
 				return err
 			}
 			defer s.Cleanup()
-			_, err := s.ListAll()
+			list, err := s.ListAll()
+			for _, l := range list {
+				fmt.Println(l)
+			}
 			return err
 		},
 	}

@@ -3,6 +3,7 @@ package checker
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/google/go-licenses/licenses"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -59,46 +60,41 @@ func (s *State) Init(module string) error {
 	cmd = s.buildCmd("go", "get", module)
 	out, err = cmd.CombinedOutput()
 	if err != nil {
-		if viper.GetBool("force") {
-			return nil
+		if !viper.GetBool("force") {
+			s.Cleanup()
+			s.log.Errorf("%s, %s", string(out), err.Error())
+			s.log.Info("Set the --force flag to continue anyway")
+			os.Exit(1)
 		}
+	}
+	cmd = s.buildCmd("go", "mod", "download")
+	s.log.Info("Downloading dependencies")
+	out, err = cmd.CombinedOutput()
+	if err != nil {
 		s.Cleanup()
 		s.log.Errorf("%s, %s", string(out), err.Error())
-		s.log.Info("Set the --force flag to continue anyway")
 		os.Exit(1)
-		return nil
 	}
 	return nil
 }
 
 func (s *State) Cleanup() {
-	os.RemoveAll(s.goCache)
-	os.RemoveAll(s.goPath)
-	os.RemoveAll(s.workingDir)
+	//os.RemoveAll(s.goCache)
+	//os.RemoveAll(s.goPath)
+	//os.RemoveAll(s.workingDir)
 }
 
-func (s *State) Check(module string) error {
+func (s *State) Check(module string) (string, licenses.Type, error) {
 	cmd := s.buildCmd("go", "list", "-m", "-json", module)
-	s.log.Info("Parsing module " + module)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	info := new(GoModuleInfo)
 	if err := json.Unmarshal(out, info); err != nil {
-		return err
+		return "", "", err
 	}
-	license, lType, err := s.classify(info)
-	if err != nil {
-		if err == ErrNoLicenseFound {
-			license = "none"
-			lType = licenses.Forbidden
-		} else {
-			return err
-		}
-	}
-	s.log.Infof("Module %s has license %s (%s)", module, license, lType)
-	return nil
+	return s.classify(info)
 }
 
 func (s *State) ListAll() ([]string, error) {
@@ -121,8 +117,10 @@ func (s *State) ListAll() ([]string, error) {
 			return output, err
 		}
 		mod := strings.Join(strings.Split(strings.TrimSpace(line), " "), "@")
-		if err := s.Check(mod); err != nil {
-			s.log.Error(err)
+		if license, ltype, err := s.Check(mod); err != nil {
+			s.log.Infof("%s: %s", mod, err)
+		} else {
+			output = append(output, fmt.Sprintf("%s %s (%s)", mod, license, ltype))
 		}
 	}
 	return output, nil
