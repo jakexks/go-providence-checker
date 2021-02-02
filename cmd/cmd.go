@@ -56,7 +56,7 @@ var (
 				licenseInfo, err := s.Classify(l)
 				if err != nil {
 					if err == checker.ErrNoLicenseFound {
-						fmt.Printf("module %s@%s: no license detected, check + add manually\n\n", l.Path, l.Version)
+						fmt.Printf("\nmodule %s@%s: no license detected, check + add manually\n\n", l.Path, l.Version)
 					} else {
 						return err
 					}
