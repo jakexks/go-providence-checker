@@ -82,7 +82,25 @@ var (
 							return err
 						}
 					case "restricted":
-						return fmt.Errorf("%s is under a restricted license %s", mod, li.LicenseName)
+						if strings.HasPrefix(li.LicenseName, "LGPL") {
+							os.MkdirAll(filepath.Join("thirdparty", li.LibraryName), 0755)
+							if err := dirutil.CopyDirectory(li.SourceDir, filepath.Join("thirdparty", li.LibraryName)); err != nil {
+								return err
+							}
+							info, err := s.GoModInfo(args[0])
+							if err != nil {
+								return err
+							}
+							if _, found := seen["LGPL"]; !found {
+								seen["LGPL"] = struct{}{}
+								os.MkdirAll(filepath.Join("firstparty", info.Path), 0755)
+								if err := dirutil.CopyDirectory(info.Dir, filepath.Join("firstparty", info.Path)); err != nil {
+									return err
+								}
+							}
+						} else {
+							return fmt.Errorf("%s is under a restricted license %s", mod, li.LicenseName)
+						}
 					}
 				}
 			}
