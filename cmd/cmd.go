@@ -76,7 +76,7 @@ var (
 					output.Write(license)
 					output.Write([]byte("\n==============================\n\n"))
 					switch li.LicenseType {
-					case "CDDL", "EPL", "GPL", "LGPL", "MPL":
+					case "reciprocal":
 						os.MkdirAll("thirdparty", 0755)
 						if err := dirutil.CopyDirectory(li.SourceDir, filepath.Join("thirdparty", li.LibraryName)); err != nil {
 							return err
