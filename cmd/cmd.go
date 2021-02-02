@@ -77,10 +77,12 @@ var (
 					output.Write([]byte("\n==============================\n\n"))
 					switch li.LicenseType {
 					case "reciprocal":
-						os.MkdirAll("thirdparty", 0755)
+						os.MkdirAll(filepath.Join("thirdparty", li.LibraryName), 0755)
 						if err := dirutil.CopyDirectory(li.SourceDir, filepath.Join("thirdparty", li.LibraryName)); err != nil {
 							return err
 						}
+					case "restricted":
+						return fmt.Errorf("%s is under a restricted license %s", mod, li.LicenseName)
 					}
 				}
 			}
