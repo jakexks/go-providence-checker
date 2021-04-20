@@ -1,1 +1,1 @@
-module "github.com/jakexks/go-providence-checker"
+module github.com/jakexks/go-providence-checker
