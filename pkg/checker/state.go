@@ -46,22 +46,23 @@ func (s *State) Init(module string) error {
 	}
 	s.workingDir = workingDir
 
-	cmd := s.buildCmd("go", "mod", "init", "tmp")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		s.Cleanup()
-		s.log.Errorf("%s, %s", string(out), err.Error())
-		return err
-	}
-	s.log.Info("Initialised empty module")
+	//cmd := s.buildCmd("go", "mod", "init", "tmp")
+	//out, err := cmd.CombinedOutput()
+	//if err != nil {
+	//	s.Cleanup()
+	//	s.log.Errorf("%s, %s", string(out), err.Error())
+	//	return err
+	//}
+	//s.log.Info("Initialised empty module")
 	s.log.Infof("Downloading %s", module)
-	cmd = s.buildCmd("go", "get", module)
-	out, err = cmd.CombinedOutput()
+	modSplit := strings.Split(module, "@")
+	cmd := s.buildCmd("git", "clone", "https://"+modSplit[0], "-b", modSplit[1], "./")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if !viper.GetBool("force") {
 			s.Cleanup()
 			s.log.Errorf("%s, %s", string(out), err.Error())
-			s.log.Info("Set the --force flag to continue anyway")
+			s.log.Info("%s failed to build, use --force flag to continue anyway", module)
 			os.Exit(1)
 		}
 	}
