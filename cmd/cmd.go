@@ -44,6 +44,7 @@ var (
 			defer s.Cleanup()
 			list, err := s.ListAll()
 			if err != nil {
+				fmt.Printf("listAll failed\n")
 				return err
 			}
 			output, err := os.OpenFile("LICENSES.txt", os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)

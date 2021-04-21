@@ -3,6 +3,7 @@ package checker
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	classifier "github.com/google/licenseclassifier/v2"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -118,7 +119,13 @@ func (s *State) ListAll() ([]*GoModuleInfo, error) {
 			}
 			return nil, err
 		}
-		mod := strings.Join(strings.Split(strings.TrimSpace(line), " "), "@")
+		var mod string
+		if strings.Contains(line, "=>") {
+			replacedMod := strings.Split(line, " => ")[1]
+			mod = strings.Join(strings.Split(strings.TrimSpace(replacedMod), " "), "@")
+		} else {
+			mod = strings.Join(strings.Split(strings.TrimSpace(line), " "), "@")
+		}
 		info, err := s.GoModInfo(mod)
 		if err != nil {
 			return nil, err
@@ -132,11 +139,13 @@ func (s *State) GoModInfo(module string) (*GoModuleInfo, error) {
 	cmd := s.buildCmd("go", "list", "-m", "-json", module)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		fmt.Printf("%s failed\n", module)
 		return nil, err
 	}
-	info := new(GoModuleInfo)
-	if err := json.Unmarshal(out, info); err != nil {
-		return info, err
+
+	info := GoModuleInfo{}
+	if err := json.Unmarshal(out, &info); err != nil {
+		return &info, err
 	}
-	return info, nil
+	return &info, nil
 }
