@@ -1,0 +1,4 @@
+FROM quay.io/jetstack/cert-manager-google-cas-issuer:0.1.1
+
+COPY LICENSES.txt /
+COPY thirdparty /
