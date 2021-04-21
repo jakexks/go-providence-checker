@@ -1,3 +1,4 @@
+// package dirutil
 package dirutil
 
 import (

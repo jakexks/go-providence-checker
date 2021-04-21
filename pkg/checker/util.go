@@ -3,7 +3,6 @@ package checker
 import (
 	"math/rand"
 	"os"
-	"os/exec"
 	"strconv"
 	"time"
 )
@@ -14,13 +13,6 @@ func newTempDir() (string, error) {
 		return "", err
 	}
 	return tmpDir, nil
-}
-
-func (s *State) buildCmd(command string, args ...string) *exec.Cmd {
-	goCmd := exec.Command(command, args...)
-	goCmd.Dir = s.workingDir
-	goCmd.Env = append(goCmd.Env, "GOPATH="+s.goPath, "GO111MODULE=on", "GOCACHE="+s.goCache, "PATH="+os.Getenv("PATH"))
-	return goCmd
 }
 
 func init() {

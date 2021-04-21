@@ -3,33 +3,28 @@ package checker
 import (
 	"bytes"
 	"encoding/json"
-	classifier "github.com/google/licenseclassifier/v2"
-	"github.com/spf13/viper"
-	"go.uber.org/zap"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
+
+	"github.com/jakexks/go-providence-checker/pkg/license"
 )
 
+// State holds information about the temporary go environment used
+// to download and analyse transitive dependencies
 type State struct {
-	log                         *zap.SugaredLogger
-	classifier                  *classifier.Classifier
 	goPath, goCache, workingDir string
 }
 
+// Init creates new temporary directories, initialises a new go module,
+// adds the package we want to use as a dependency, downloads transitive
+// dependencies
 func (s *State) Init(module string) error {
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		return err
-	}
-	s.log = logger.Sugar()
-
-	s.classifier = classifier.NewClassifier(0.2)
-	if err := s.classifier.LoadLicenses("./licenses"); err != nil {
-		return err
-	}
-
-	s.log.Info("Creating Temporary Directories")
+	log.Info("Creating Temporary Directories")
 	goPath, err := newTempDir()
 	if err != nil {
 		return err
@@ -50,38 +45,40 @@ func (s *State) Init(module string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		s.Cleanup()
-		s.log.Errorf("%s, %s", string(out), err.Error())
+		log.Errorf("%s, %s", string(out), err.Error())
 		return err
 	}
-	s.log.Info("Initialised empty module")
-	s.log.Infof("Downloading %s", module)
+	log.Info("Initialised empty module")
+	log.Infof("Downloading %s", module)
 	cmd = s.buildCmd("go", "get", module)
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		if !viper.GetBool("force") {
 			s.Cleanup()
-			s.log.Errorf("%s, %s", string(out), err.Error())
-			s.log.Info("Set the --force flag to continue anyway")
+			log.Errorf("%s, %s", string(out), err.Error())
+			log.Info("Set the --force flag to continue anyway")
 			os.Exit(1)
 		}
 	}
 	cmd = s.buildCmd("go", "mod", "download")
-	s.log.Info("Downloading transitive dependencies")
+	log.Info("Downloading transitive dependencies")
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		s.Cleanup()
-		s.log.Errorf("%s, %s", string(out), err.Error())
+		log.Errorf("%s, %s", string(out), err.Error())
 		os.Exit(1)
 	}
 	return nil
 }
 
+// Cleanup attempts to remove all temporary directories
 func (s *State) Cleanup() {
 	os.RemoveAll(s.goCache)
 	os.RemoveAll(s.goPath)
 	os.RemoveAll(s.workingDir)
 }
 
+// Check prints license information for a single go package
 func (s *State) Check(module string) error {
 	info, err := s.GoModInfo(module)
 	if err != nil {
@@ -91,13 +88,19 @@ func (s *State) Check(module string) error {
 	if err != nil {
 		return err
 	}
-	s.log.Infof("The following licenses were found:")
+	log.Infof("The following licenses were found:")
 	for _, li := range licenses {
-		s.log.Infof("%s %s (%s)", li.LicenseFile, li.LicenseName, li.LicenseType)
+		log.Infof("%s %s (%s)", li.LicenseFile, li.LicenseName, li.LicenseType)
 	}
 	return err
 }
 
+// Classify calls the license Classifier
+func (s *State) Classify(info *GoModuleInfo) ([]license.Info, error) {
+	return license.Classify(info)
+}
+
+// ListAll returns all modules used by a given package
 func (s *State) ListAll() ([]*GoModuleInfo, error) {
 	var allModules []*GoModuleInfo
 	cmd := s.buildCmd("go", "list", "-m", "all")
@@ -127,6 +130,7 @@ func (s *State) ListAll() ([]*GoModuleInfo, error) {
 	return allModules, nil
 }
 
+// GoModInfo returns information about a go package
 func (s *State) GoModInfo(module string) (*GoModuleInfo, error) {
 	cmd := s.buildCmd("go", "list", "-m", "-json", module)
 	out, err := cmd.CombinedOutput()
@@ -139,3 +143,12 @@ func (s *State) GoModInfo(module string) (*GoModuleInfo, error) {
 	}
 	return info, nil
 }
+
+// buildCmd runs a command in the context of the tempoary directories from State
+func (s *State) buildCmd(command string, args ...string) *exec.Cmd {
+	goCmd := exec.Command(command, args...)
+	goCmd.Dir = s.workingDir
+	goCmd.Env = append(goCmd.Env, "GOPATH="+s.goPath, "GO111MODULE=on", "GOCACHE="+s.goCache, "PATH="+os.Getenv("PATH"))
+	return goCmd
+}
+
