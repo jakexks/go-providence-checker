@@ -56,8 +56,11 @@ func (s *State) Init(module string) error {
 	//}
 	//s.log.Info("Initialised empty module")
 	s.log.Infof("Downloading %s", module)
+	// Best effort to download modules
+	cmd := s.buildCmd("go", "get", module)
+	_, _ = cmd.CombinedOutput()
 	modSplit := strings.Split(module, "@")
-	cmd := s.buildCmd("git", "clone", "https://"+modSplit[0], "-b", modSplit[1], "./")
+	cmd = s.buildCmd("git", "clone", "https://"+modSplit[0], "-b", modSplit[1], "./")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if !viper.GetBool("force") {
