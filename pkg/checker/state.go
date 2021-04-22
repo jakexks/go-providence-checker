@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+
 	classifier "github.com/google/licenseclassifier/v2"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
-	"io"
-	"os"
-	"strings"
 )
 
 type State struct {
@@ -30,12 +32,14 @@ func (s *State) Init(module string) error {
 		return err
 	}
 
-	s.log.Info("Creating Temporary Directories")
-	goPath, err := newTempDir()
+	c := exec.Command("go", "env", "GOPATH")
+	bytes, err := c.Output()
 	if err != nil {
-		return err
+		return fmt.Errorf("while running 'go env GOPATH' to guess your GOPATH: %w", err)
 	}
-	s.goPath = goPath
+	s.goPath = strings.TrimSpace(string(bytes))
+
+	s.log.Info("Creating Temporary Directories")
 	goCache, err := newTempDir()
 	if err != nil {
 		return err
@@ -47,14 +51,6 @@ func (s *State) Init(module string) error {
 	}
 	s.workingDir = workingDir
 
-	//cmd := s.buildCmd("go", "mod", "init", "tmp")
-	//out, err := cmd.CombinedOutput()
-	//if err != nil {
-	//	s.Cleanup()
-	//	s.log.Errorf("%s, %s", string(out), err.Error())
-	//	return err
-	//}
-	//s.log.Info("Initialised empty module")
 	s.log.Infof("Downloading %s", module)
 	// Best effort to download modules
 	cmd := s.buildCmd("go", "get", module)
@@ -83,7 +79,6 @@ func (s *State) Init(module string) error {
 
 func (s *State) Cleanup() {
 	os.RemoveAll(s.goCache)
-	os.RemoveAll(s.goPath)
 	os.RemoveAll(s.workingDir)
 }
 

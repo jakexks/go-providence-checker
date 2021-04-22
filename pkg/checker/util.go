@@ -19,7 +19,7 @@ func newTempDir() (string, error) {
 func (s *State) buildCmd(command string, args ...string) *exec.Cmd {
 	goCmd := exec.Command(command, args...)
 	goCmd.Dir = s.workingDir
-	goCmd.Env = append(goCmd.Env, "GOPATH="+s.goPath, "GO111MODULE=on", "GOCACHE="+s.goCache, "PATH="+os.Getenv("PATH"))
+	goCmd.Env = append(goCmd.Env, "GO111MODULE=on", "GOPATH="+s.goPath, "GOCACHE="+s.goCache, "PATH="+os.Getenv("PATH"))
 	return goCmd
 }
 
