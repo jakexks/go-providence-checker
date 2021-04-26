@@ -3,18 +3,19 @@ package checker
 import (
 	"errors"
 	"fmt"
-	"github.com/go-enry/go-license-detector/v4/licensedb"
-	"github.com/google/licenseclassifier"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/go-enry/go-license-detector/v4/licensedb"
+	"github.com/google/licenseclassifier"
 )
 
 var (
-	possibleLicense   = regexp.MustCompile(`^(?i)(LICEN(S|C)E|COPYING|README|NOTICE)(\\..+)?$`)
-	ErrNoLicenseFound = errors.New("no license found")
+	licenseFileRegex      = regexp.MustCompile(`^(?i)(LICEN(S|C)E|COPYING|README|NOTICE)(\\..+)?$`)
+	ErrNoLicenseFileFound = errors.New("the license detector (github.com/go-enry/go-license-detector) was not able to find a license in the directory")
 )
 
 type LicenseInfo struct {
@@ -27,16 +28,19 @@ type LicenseInfo struct {
 	LicenseType    string
 }
 
+// Returns ErrNoLicenseFileDetected when no license can be found in the module's
+// tree. May return an empty list of license infos even when license files are
+// found, because the level of confidence is not high enough for those license
+// files.
 func (s *State) Classify(info *GoModuleInfo) ([]LicenseInfo, error) {
 	var licenses []LicenseInfo
-
-	result := licensedb.Analyse(info.Dir)
-	if len(result) == 0 {
-		s.log.Infof("no results found for %s\n", info.Dir)
+	licenseFiles := licensedb.Analyse(info.Dir)
+	if len(licenseFiles) == 0 {
+		return nil, ErrNoLicenseFileFound
 	}
-	for _, r := range result {
+	for _, r := range licenseFiles {
 		if len(r.ErrStr) != 0 {
-			s.log.Infof("FYI: %s: %s\n", info.Path, r.ErrStr)
+			s.log.Infof("FYI %s: %s; now trying recursively", info.Path, r.ErrStr)
 			return s.deepClassify(info)
 		}
 
@@ -66,33 +70,36 @@ func (s *State) Classify(info *GoModuleInfo) ([]LicenseInfo, error) {
 		})
 	}
 
-	if len(licenses) == 0 {
-		return nil, ErrNoLicenseFound
-	}
-
 	return licenses, nil
 }
 
+// May return an empty list of license infos even when license files are found,
+// because the level of confidence is not high enough for those license files.
 func (s *State) deepClassify(info *GoModuleInfo) ([]LicenseInfo, error) {
 	var licenseFiles []string
-	var licenses []LicenseInfo
-	if err := filepath.Walk(info.Dir, func(path string, fileInfo os.FileInfo, err error) error {
+	err := filepath.Walk(info.Dir, func(path string, fileInfo os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("walking the tree starting at '%s': %w", info.Dir, err)
 		}
-		if !fileInfo.IsDir() {
-			if possibleLicense.MatchString(fileInfo.Name()) {
-				licenseFiles = append(licenseFiles, path)
-			}
+		if fileInfo.IsDir() {
+			return nil
 		}
+		if !licenseFileRegex.MatchString(fileInfo.Name()) {
+			return nil
+		}
+
+		licenseFiles = append(licenseFiles, path)
 		return nil
-	}); err != nil {
-		return licenses, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking the tree starting at '%s': %w", info.Dir, err)
 	}
+
+	var licenses []LicenseInfo
 	for _, licenseFile := range licenseFiles {
 		content, err := ioutil.ReadFile(licenseFile)
 		if err != nil {
-			return licenses, err
+			return nil, fmt.Errorf("reading license file '%s': %w", licenseFile, err)
 		}
 		matches := s.classifier.Match(content)
 		for _, m := range matches {
@@ -106,9 +113,6 @@ func (s *State) deepClassify(info *GoModuleInfo) ([]LicenseInfo, error) {
 				LicenseName:    licenseName(m.Name),
 			})
 		}
-	}
-	if len(licenses) == 0 {
-		return nil, ErrNoLicenseFound
 	}
 	return licenses, nil
 }

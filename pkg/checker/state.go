@@ -3,6 +3,7 @@ package checker
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,8 +29,12 @@ func (s *State) Init(module string) error {
 	s.log = logger.Sugar()
 
 	s.classifier = classifier.NewClassifier(0.2)
-	if err := s.classifier.LoadLicenses("./licenses"); err != nil {
-		return err
+	err = s.classifier.LoadLicenses("./licenses")
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("the folder ./licenses is missing, download it with:\n  curl -L https://github.com/google/licenseclassifier/archive/refs/tags/v2.0.0-alpha.1.tar.gz | tar xz && mv licenseclassifier-*/licenses .")
+	case err != nil:
+		return fmt.Errorf("loading licenses from './licenses': %w", err)
 	}
 
 	c := exec.Command("go", "env", "GOPATH")
@@ -42,12 +47,12 @@ func (s *State) Init(module string) error {
 	s.log.Info("Creating Temporary Directories")
 	goCache, err := newTempDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("creating temp dir for storing the temporary GOPATH: %w", err)
 	}
 	s.goCache = goCache
 	workingDir, err := newTempDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("creating temp working dir: %w", err)
 	}
 	s.workingDir = workingDir
 
@@ -85,17 +90,17 @@ func (s *State) Cleanup() {
 func (s *State) Check(module string) error {
 	info, err := s.GoModInfo(module)
 	if err != nil {
-		return err
+		return fmt.Errorf("while reading go.mod: %w", err)
 	}
 	licenses, err := s.Classify(info)
 	if err != nil {
-		return err
+		return fmt.Errorf("while classifying %v: %w", info, err)
 	}
 	s.log.Infof("The following licenses were found:")
 	for _, li := range licenses {
 		s.log.Infof("%s %s (%s)", li.LicenseFile, li.LicenseName, li.LicenseType)
 	}
-	return err
+	return nil
 }
 
 func (s *State) ListAll() ([]*GoModuleInfo, error) {
