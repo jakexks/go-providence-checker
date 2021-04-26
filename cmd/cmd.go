@@ -61,6 +61,7 @@ var (
 func init() {
 	cobra.OnInitialize(flagsFromEnv)
 	root.PersistentFlags().BoolP("force", "f", false, "Ignore errors during go get")
+	root.PersistentFlags().BoolP("debug", "d", false, "Print commands being that are run in the background")
 	root.AddCommand(check, checkAll)
 	viper.BindPFlags(root.PersistentFlags())
 }
