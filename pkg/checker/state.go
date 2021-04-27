@@ -22,7 +22,12 @@ type State struct {
 }
 
 func (s *State) Init(module string) error {
-	logger, err := zap.NewDevelopment()
+	var opts []zap.Option
+	if viper.GetBool("debug") {
+		opts = append(opts, zap.IncreaseLevel(zap.DebugLevel))
+	}
+
+	logger, err := zap.NewDevelopment(opts...)
 	if err != nil {
 		return err
 	}

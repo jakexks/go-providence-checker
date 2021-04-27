@@ -24,9 +24,7 @@ func (s *State) buildCmd(cmd string, args ...string) *exec.Cmd {
 	goCmd := exec.Command(cmd, args...)
 	goCmd.Dir = s.workingDir
 	goCmd.Env = append(goCmd.Env, "GO111MODULE=on", "GOPATH="+s.goPath, "PATH="+os.Getenv("PATH"))
-	if viper.GetBool("debug") {
-		s.log.Infof(PrettyCommand(cmd, args...))
-	}
+	s.log.Debugf(PrettyCommand(cmd, args...))
 	return goCmd
 }
 
