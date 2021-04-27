@@ -66,6 +66,16 @@ func (s *State) Init(module string) error {
 	cmd := s.buildCmd("go", "get", module)
 	_, _ = cmd.CombinedOutput()
 	modSplit := strings.Split(module, "@")
+
+	// When the module that is given to go-providence-checker has "replace"
+	// directives in its go.mod, such as:
+	//
+	//  go-providence-checker dependencies github.com/jetstack/preflight@v0.1.29
+	//
+	// we can't just "go get" since "go get" ignores the replace directives. To
+	// work around that, the only way is to actually clone the repo. The
+	// guesswork we do to find the HTTPS URL may not always work since we mainly
+	// wanted it to work for publicly hosted GitHub repos.
 	cmd = s.buildCmd("git", "clone", "https://"+modSplit[0], "-b", modSplit[1], "./")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
