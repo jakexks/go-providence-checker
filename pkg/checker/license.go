@@ -40,7 +40,7 @@ func (s *State) Classify(info *GoModuleInfo) ([]LicenseInfo, error) {
 	}
 	for _, result := range results {
 		if len(result.ErrStr) != 0 {
-			s.log.Infof("FYI %s: %s; now trying to find licenses inside Go files using Google's classifier", info.Path, result.ErrStr)
+			s.Log.Infof("FYI %s: %s; now trying to find licenses inside Go files using Google's classifier", info.Path, result.ErrStr)
 			licences, err := s.deepClassify(info)
 			if err != nil {
 				return nil, fmt.Errorf("using Google's classifier: %w", err)

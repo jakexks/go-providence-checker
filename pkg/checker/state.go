@@ -16,7 +16,7 @@ import (
 )
 
 type State struct {
-	log                         *zap.SugaredLogger
+	Log                         *zap.SugaredLogger
 	classifier                  *classifier.Classifier
 	goPath, goCache, workingDir string
 }
@@ -31,7 +31,7 @@ func (s *State) Init(module string) error {
 	if err != nil {
 		return err
 	}
-	s.log = logger.Sugar()
+	s.Log = logger.Sugar()
 
 	s.classifier = classifier.NewClassifier(0.2)
 	err = s.classifier.LoadLicenses("./licenses")
@@ -49,7 +49,7 @@ func (s *State) Init(module string) error {
 	}
 	s.goPath = strings.TrimSpace(string(bytes))
 
-	s.log.Info("Creating Temporary Directories")
+	s.Log.Info("Creating Temporary Directories")
 	goCache, err := newTempDir()
 	if err != nil {
 		return fmt.Errorf("creating temp dir for storing the temporary GOPATH: %w", err)
@@ -61,7 +61,7 @@ func (s *State) Init(module string) error {
 	}
 	s.workingDir = workingDir
 
-	s.log.Infof("Downloading %s", module)
+	s.Log.Infof("Downloading %s", module)
 	// Best effort to download modules
 	cmd := s.buildCmd("go", "get", module)
 	_, _ = cmd.CombinedOutput()
@@ -81,17 +81,17 @@ func (s *State) Init(module string) error {
 	if err != nil {
 		if !viper.GetBool("force") {
 			s.Cleanup()
-			s.log.Errorf("%s, %s", string(out), err.Error())
-			s.log.Info("%s failed to build, use --force flag to continue anyway", module)
+			s.Log.Errorf("%s, %s", string(out), err.Error())
+			s.Log.Info("%s failed to build, use --force flag to continue anyway", module)
 			os.Exit(1)
 		}
 	}
 	cmd = s.buildCmd("go", "mod", "download")
-	s.log.Info("Downloading transitive dependencies")
+	s.Log.Info("Downloading transitive dependencies")
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		s.Cleanup()
-		s.log.Errorf("%s, %s", string(out), err.Error())
+		s.Log.Errorf("%s, %s", string(out), err.Error())
 		os.Exit(1)
 	}
 	return nil
@@ -111,9 +111,9 @@ func (s *State) Check(module string) error {
 	if err != nil {
 		return fmt.Errorf("while classifying %v: %w", info, err)
 	}
-	s.log.Infof("The following licenses were found:")
+	s.Log.Infof("The following licenses were found:")
 	for _, li := range licenses {
-		s.log.Infof("%s %s (%s)", li.LicenseFile, li.LicenseName, li.LicenseType)
+		s.Log.Infof("%s %s (%s)", li.LicenseFile, li.LicenseName, li.LicenseType)
 	}
 	return nil
 }

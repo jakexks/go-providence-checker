@@ -95,12 +95,16 @@ func run(s checker.State, moduleWithTag string) error {
 	for _, l := range list {
 		licenseInfos, err := s.Classify(l)
 		switch {
-		case len(licenseInfos) == 0:
-			return fmt.Errorf("while classifying licenses: some licenses files were found, but the confidence level was too low")
 		case err == checker.ErrNoLicenseFileFound:
 			return err
 		case err != nil:
 			fmt.Printf("module %s@%s: no license detected, check + add manually\n", l.Path, l.Version)
+		case len(licenseInfos) == 0:
+			if viper.GetBool("force") {
+				s.Log.Infof("no licenses found for '%s@%s'", l.GoMod, l.GoVersion)
+			} else {
+				return fmt.Errorf("while classifying licenses: no licenses found for '%s@%s'", l.GoMod, l.GoVersion)
+			}
 		default:
 			// Happy path: keep going.
 		}
