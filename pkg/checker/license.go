@@ -34,39 +34,49 @@ type LicenseInfo struct {
 // files.
 func (s *State) Classify(info *GoModuleInfo) ([]LicenseInfo, error) {
 	var licenses []LicenseInfo
-	licenseFiles := licensedb.Analyse(info.Dir)
-	if len(licenseFiles) == 0 {
+	results := licensedb.Analyse(info.Dir)
+	if len(results) == 0 {
 		return nil, ErrNoLicenseFileFound
 	}
-	for _, r := range licenseFiles {
-		if len(r.ErrStr) != 0 {
-			s.log.Infof("FYI %s: %s; now trying recursively", info.Path, r.ErrStr)
-			return s.deepClassify(info)
+	for _, result := range results {
+		if len(result.ErrStr) != 0 {
+			s.log.Infof("FYI %s: %s; now trying to find licenses inside Go files using Google's classifier", info.Path, result.ErrStr)
+			licences, err := s.deepClassify(info)
+			if err != nil {
+				return nil, fmt.Errorf("using Google's classifier: %w", err)
+			}
+
+			return licences, nil
 		}
 
-		// Find the highest confidence license
-		var max float32 = 0.0
-		var license string
-		var licenseFile string
-		for _, m := range r.Matches {
-			if m.Confidence > max {
-				// Docker uses LICENSE.docs for licensing docs code
-				if !strings.Contains(m.File, "docs") {
-					max = m.Confidence
-					license = m.License
-					licenseFile = m.File
-				}
+		// Find the highest confidence license.
+		var highest float32 = 0.0
+		var highestLicense string
+		var highestFile string
+		for _, m := range result.Matches {
+			if m.Confidence < highest {
+				continue
 			}
+
+			// Docker uses LICENSE.docs for licensing docs code, we don't care
+			// about documentation licenses.
+			if strings.Contains(m.File, "docs") {
+				continue
+			}
+
+			highest = m.Confidence
+			highestLicense = m.License
+			highestFile = m.File
 		}
 
 		licenses = append(licenses, LicenseInfo{
 			LibraryName:    info.Path,
 			LibraryVersion: info.Version,
-			LicenseFile:    filepath.Join(r.Arg, licenseFile),
-			LicenseType:    licenseType(license),
+			LicenseFile:    filepath.Join(result.Arg, highestFile),
+			LicenseType:    licenseType(highestLicense),
 			SourceDir:      info.Dir,
-			LinkToLicense:  createLink(info.Path, info.Version, strings.TrimPrefix(licenseFile, info.Dir+"/")),
-			LicenseName:    licenseName(license),
+			LinkToLicense:  createLink(info.Path, info.Version, strings.TrimPrefix(highestFile, info.Dir+"/")),
+			LicenseName:    licenseName(highestLicense),
 		})
 	}
 

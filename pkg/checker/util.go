@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/alessio/shellescape"
-	"github.com/spf13/viper"
 )
 
 func newTempDir() (string, error) {
