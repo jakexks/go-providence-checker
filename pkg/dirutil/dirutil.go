@@ -12,7 +12,7 @@ import (
 func CopyDirectory(srcDir, dest string) error {
 	entries, err := ioutil.ReadDir(srcDir)
 	if err != nil {
-		return fmt.Errorf("list the content of the source directory '%s': %w", srcDir, err)
+		return fmt.Errorf("listing source directory '%s': %w", srcDir, err)
 	}
 	for _, entry := range entries {
 		sourcePath := filepath.Join(srcDir, entry.Name())
@@ -20,7 +20,7 @@ func CopyDirectory(srcDir, dest string) error {
 
 		fileInfo, err := os.Stat(sourcePath)
 		if err != nil {
-			return fmt.Errorf("running syscall 'stat' on '%s': %w", sourcePath, err)
+			return fmt.Errorf("stat syscall on the file '%s': %w", sourcePath, err)
 		}
 
 		stat, ok := fileInfo.Sys().(*syscall.Stat_t)
@@ -34,15 +34,15 @@ func CopyDirectory(srcDir, dest string) error {
 				return fmt.Errorf("creating directory: %w", err)
 			}
 			if err := CopyDirectory(sourcePath, destPath); err != nil {
-				return fmt.Errorf("copying directory: %w", err)
+				return fmt.Errorf("copying dir '%s' to '%s': %w", sourcePath, destPath, err)
 			}
 		case os.ModeSymlink:
 			if err := CopySymLink(sourcePath, destPath); err != nil {
-				return fmt.Errorf("copying symlink: %w", err)
+				return fmt.Errorf("copying symlink '%s' to '%s': %w", sourcePath, destPath, err)
 			}
 		default:
 			if err := Copy(sourcePath, destPath); err != nil {
-				return fmt.Errorf("copying content of '%s' into '%s': %w", sourcePath, destPath, err)
+				return fmt.Errorf("copying regular file '%s' to '%s': %w", sourcePath, destPath, err)
 			}
 		}
 
@@ -52,8 +52,12 @@ func CopyDirectory(srcDir, dest string) error {
 
 		isSymlink := entry.Mode()&os.ModeSymlink != 0
 		if !isSymlink {
-			if err := os.Chmod(destPath, entry.Mode()); err != nil {
-				return fmt.Errorf("while copying the mode from '%s' to '%s' with chmod: %w", entry.Name(), destPath, err)
+			// Not only do we want to copy the file mode along to the copied
+			// file, we also want to keep everything writable since we need to
+			// be able to 'rm -rf thirdparty' for example.
+			err := os.Chmod(destPath, entry.Mode()|0644)
+			if err != nil {
+				return fmt.Errorf("while copying the file mode of '%s' over to '%s': %w", entry.Name(), destPath, err)
 			}
 		}
 	}
@@ -61,11 +65,10 @@ func CopyDirectory(srcDir, dest string) error {
 }
 
 func Copy(srcFile, dstFile string) error {
-	out, err := os.Create(dstFile)
+	out, err := os.OpenFile(dstFile, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("while creating the destination file: %w", err)
 	}
-
 	defer out.Close()
 
 	in, err := os.Open(srcFile)

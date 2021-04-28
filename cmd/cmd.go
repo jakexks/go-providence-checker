@@ -82,85 +82,95 @@ func Execute() {
 // The checker state must have been already intialized with Init. The
 // moduleWithTag is of the form "github.com/apache/thrift@v0.13.0".
 func run(s checker.State, moduleWithTag string) error {
-	list, err := s.ListAll()
+	gomodEntries, err := s.GoList()
 	if err != nil {
 		return fmt.Errorf("running checker.ListAll: %w", err)
 	}
-	output, err := os.OpenFile("LICENSES.txt", os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+	licensestxt, err := os.OpenFile("LICENSES.txt", os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("creating LICENSES.txt: %w", err)
 	}
-	defer output.Close()
+	defer licensestxt.Close()
 	seen := make(map[string]struct{})
-	for _, l := range list {
-		licenseInfos, err := s.Classify(l)
+	for _, entry := range gomodEntries {
+		li, err := s.Classify(entry)
 		switch {
 		case err == checker.ErrNoLicenseFileFound:
-			return err
-		case err != nil:
-			fmt.Printf("module %s@%s: no license detected, check + add manually\n", l.Path, l.Version)
-		case len(licenseInfos) == 0:
 			if viper.GetBool("force") {
-				s.Log.Infof("no licenses found for '%s@%s'", l.GoMod, l.GoVersion)
+				s.Log.Infof("module %s@%s: no license file found in the directory '%s'", entry.Path, entry.Version, entry.GoMod)
+				continue
 			} else {
-				return fmt.Errorf("while classifying licenses: no licenses found for '%s@%s'", l.GoMod, l.GoVersion)
+				return fmt.Errorf("module %s@%s: no license file found in the directory '%s'. Run with --force to ignore.", entry.Path, entry.Version, entry.GoMod)
 			}
+		case err != nil:
+			fmt.Printf("module %s@%s: no license detected, check + add manually\n", entry.Path, entry.Version)
+			continue
 		default:
 			// Happy path: keep going.
 		}
 
-		for _, li := range licenseInfos {
-			mod := fmt.Sprintf("%s@%s", li.LibraryName, li.LibraryVersion)
-			if _, found := seen[mod]; found {
+		mod := fmt.Sprintf("%s@%s", li.LibraryName, li.LibraryVersion)
+
+		if _, found := seen[mod]; found {
+			continue
+		}
+		seen[mod] = struct{}{}
+
+		fmt.Printf("module %s: %s (%s)\n", mod, li.LicenseName, li.LicenseType)
+
+		_, err = licensestxt.Write([]byte(fmt.Sprintf("Library %s used under the %s License, reproduced below:\n\n", mod, li.LicenseName)))
+		if err != nil {
+			return fmt.Errorf("module %s: while writing to LICENSES.txt: %w", mod, err)
+		}
+
+		license, err := ioutil.ReadFile(li.LicenseFile)
+		if err != nil {
+			s.Log.Debugf("%s: go mod entry is %#v", mod, li)
+			return fmt.Errorf("module %s: while reading license file '%s': %w", mod, li.LicenseFile, err)
+		}
+		licensestxt.Write(license)
+		licensestxt.Write([]byte("\n==============================\n\n"))
+		switch li.LicenseType {
+		case "reciprocal":
+			dstPath := filepath.Join("thirdparty", li.LibraryName)
+			os.MkdirAll(dstPath, 0755)
+			err := dirutil.CopyDirectory(li.SourceDir, dstPath)
+			if err != nil {
+				return fmt.Errorf("while copying dir '%s' into '%s': %w", li.SourceDir, dstPath, err)
+			}
+		case "restricted":
+			if !strings.HasPrefix(li.LicenseName, "LGPL") {
+				return fmt.Errorf("%s is under a restricted license %s", mod, li.LicenseName)
+			}
+
+			dstPath := filepath.Join("thirdparty", li.LibraryName)
+
+			os.MkdirAll(dstPath, 0755)
+			err := dirutil.CopyDirectory(li.SourceDir, dstPath)
+			if err != nil {
+				return fmt.Errorf("while copying dir '%s' into '%s': %w", li.SourceDir, dstPath, err)
+			}
+
+			info, err := s.GoListSingle(moduleWithTag)
+			if err != nil {
+				return fmt.Errorf("while fetching info from the go.mod of module '%s': %w", moduleWithTag, err)
+			}
+
+			if _, found := seen["LGPL"]; found {
 				continue
 			}
-			seen[mod] = struct{}{}
-			fmt.Printf("module %s: %s (%s)\n", mod, li.LicenseName, li.LicenseType)
-			output.Write([]byte(fmt.Sprintf("Library %s used under the %s License, reproduced below:\n\n", mod, li.LicenseName)))
-			license, err := ioutil.ReadFile(li.LicenseFile)
+			seen["LGPL"] = struct{}{}
+
+			dstPath = filepath.Join("firstparty", info.Path)
+
+			err = os.MkdirAll(dstPath, 0755)
 			if err != nil {
-				return fmt.Errorf("while reading license file '%s': %w", li.LicenseFile, err)
+				return fmt.Errorf("mkdir -p %s: %w", dstPath, err)
 			}
-			output.Write(license)
-			output.Write([]byte("\n==============================\n\n"))
-			switch li.LicenseType {
-			case "reciprocal":
-				os.MkdirAll(filepath.Join("thirdparty", li.LibraryName), 0755)
-				dstPath := filepath.Join("thirdparty", li.LibraryName)
-				err := dirutil.CopyDirectory(li.SourceDir, dstPath)
-				if err != nil {
-					return fmt.Errorf("while copying dir '%s' into '%s': %w", li.SourceDir, dstPath, err)
-				}
-			case "restricted":
-				if !strings.HasPrefix(li.LicenseName, "LGPL") {
-					return fmt.Errorf("%s is under a restricted license %s", mod, li.LicenseName)
-				}
 
-				dstPath := filepath.Join("thirdparty", li.LibraryName)
-
-				os.MkdirAll(dstPath, 0755)
-				if err := dirutil.CopyDirectory(li.SourceDir, dstPath); err != nil {
-					return fmt.Errorf("while copying dir '%s' into '%s': %w", li.SourceDir, dstPath, err)
-				}
-
-				info, err := s.GoModInfo(moduleWithTag)
-				if err != nil {
-					return fmt.Errorf("while fetching info from the go.mod of module '%s': %w", moduleWithTag, err)
-				}
-				if _, found := seen["LGPL"]; !found {
-					seen["LGPL"] = struct{}{}
-					dstPath := filepath.Join("firstparty", info.Path)
-					err = os.MkdirAll(dstPath, 0755)
-					if err != nil {
-						return fmt.Errorf("mkdir -p %s: %w", dstPath, err)
-					}
-
-					err = dirutil.CopyDirectory(info.Dir, filepath.Join("firstparty", info.Path))
-					if err != nil {
-						return fmt.Errorf("while copying dir of '%s' into '%s': %w", li.SourceDir, dstPath, err)
-					}
-				}
-
+			err = dirutil.CopyDirectory(info.Dir, dstPath)
+			if err != nil {
+				return fmt.Errorf("while copying dir of '%s' into '%s': %w", li.SourceDir, dstPath, err)
 			}
 		}
 	}

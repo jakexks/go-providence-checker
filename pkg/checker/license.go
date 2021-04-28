@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,11 +12,12 @@ import (
 
 	"github.com/go-enry/go-license-detector/v4/licensedb"
 	"github.com/google/licenseclassifier"
+	classifier "github.com/google/licenseclassifier/v2"
 )
 
 var (
 	licenseFileRegex      = regexp.MustCompile(`^(?i)(LICEN(S|C)E|COPYING|README|NOTICE)(\\..+)?$`)
-	ErrNoLicenseFileFound = errors.New("the license detector (github.com/go-enry/go-license-detector) was not able to find a license in the directory")
+	ErrNoLicenseFileFound = errors.New("not able to find a license file in this directory")
 )
 
 type LicenseInfo struct {
@@ -28,64 +30,102 @@ type LicenseInfo struct {
 	LicenseType    string
 }
 
-// Returns ErrNoLicenseFileDetected when no license can be found in the module's
-// tree. May return an empty list of license infos even when license files are
-// found, because the level of confidence is not high enough for those license
-// files.
-func (s *State) Classify(info *GoModuleInfo) ([]LicenseInfo, error) {
-	var licenses []LicenseInfo
+func (s *State) Classify(info GoModuleInfo) (LicenseInfo, error) {
+	license, err := fastClassify(info)
+	if err == nil {
+		return license, nil
+	}
+	if err != ErrNoLicenseFileFound {
+		return LicenseInfo{}, err
+	}
+
+	s.Log.Infof("%s: go-license-detector didn't find anything, falling back to google/licenseclassifier", info.Path)
+
+	license, err = deepClassify(s.classifier, info)
+	if err == nil {
+		return license, nil
+	}
+	if err != ErrNoLicenseFileFound {
+		return LicenseInfo{}, err
+	}
+
+	return LicenseInfo{}, ErrNoLicenseFileFound
+}
+
+// Returns ErrNoLicenseFileFound when no license can be found in the
+// module's tree.
+func fastClassify(info GoModuleInfo) (LicenseInfo, error) {
+	// A single result is returned since we give a single directory.
 	results := licensedb.Analyse(info.Dir)
 	if len(results) == 0 {
-		return nil, ErrNoLicenseFileFound
+		return LicenseInfo{}, errors.New("developer mistake since one result = one dir")
 	}
-	for _, result := range results {
-		if len(result.ErrStr) != 0 {
-			s.Log.Infof("FYI %s: %s; now trying to find licenses inside Go files using Google's classifier", info.Path, result.ErrStr)
-			licences, err := s.deepClassify(info)
-			if err != nil {
-				return nil, fmt.Errorf("using Google's classifier: %w", err)
-			}
+	result := results[0]
+	matches := result.Matches
 
-			return licences, nil
-		}
+	switch result.ErrStr {
+	case "no license file was found":
+		return LicenseInfo{}, ErrNoLicenseFileFound
+	case "":
+		// No error, let's continue.
+	default:
+		return LicenseInfo{}, fmt.Errorf("using go-license-detector: %s", result.ErrStr)
+	}
 
-		// Find the highest confidence license.
-		var highest float32 = 0.0
-		var highestLicense string
-		var highestFile string
-		for _, m := range result.Matches {
-			if m.Confidence < highest {
-				continue
-			}
+	if len(matches) == 0 {
+		return LicenseInfo{}, ErrNoLicenseFileFound
+	}
 
-			// Docker uses LICENSE.docs for licensing docs code, we don't care
-			// about documentation licenses.
-			if strings.Contains(m.File, "docs") {
-				continue
-			}
-
-			highest = m.Confidence
-			highestLicense = m.License
-			highestFile = m.File
-		}
-
-		licenses = append(licenses, LicenseInfo{
-			LibraryName:    info.Path,
-			LibraryVersion: info.Version,
-			LicenseFile:    filepath.Join(result.Arg, highestFile),
-			LicenseType:    licenseType(highestLicense),
-			SourceDir:      info.Dir,
-			LinkToLicense:  createLink(info.Path, info.Version, strings.TrimPrefix(highestFile, info.Dir+"/")),
-			LicenseName:    licenseName(highestLicense),
+	var candidates []candidate
+	for _, match := range matches {
+		candidates = append(candidates, candidate{
+			license:    match.License,
+			confidence: float64(match.Confidence),
+			path:       filepath.Join(result.Arg, match.File),
 		})
 	}
 
-	return licenses, nil
+	highest := highestConfidence(candidates)
+
+	return LicenseInfo{
+		LibraryName:    info.Path,
+		LibraryVersion: info.Version,
+		LicenseFile:    highest.path,
+		LicenseType:    licenseType(highest.license),
+		SourceDir:      info.Dir,
+		LinkToLicense:  createLink(info.Path, info.Version, strings.TrimPrefix(highest.path, info.Dir+"/")),
+		LicenseName:    licenseName(highest.license),
+	}, nil
 }
 
-// May return an empty list of license infos even when license files are found,
-// because the level of confidence is not high enough for those license files.
-func (s *State) deepClassify(info *GoModuleInfo) ([]LicenseInfo, error) {
+type candidate struct {
+	path       string  // Absolute path to the license file.
+	license    string  // Of the form "BSD-3-Clause".
+	confidence float64 // Some relative number, the higher the more confident.
+}
+
+func highestConfidence(c []candidate) candidate {
+	highest := candidate{confidence: -math.MaxInt64}
+	for _, current := range c {
+		if current.confidence < highest.confidence {
+			continue
+		}
+
+		// Docker uses LICENSE.docs for licensing docs code, we don't care
+		// about documentation licenses.
+		if strings.HasSuffix(current.path, "LICENSE.docs") {
+			continue
+		}
+
+		highest = current
+	}
+
+	return highest
+}
+
+// Use Google's slow licenseclassifier to find the possible licenses in the
+// whole project's directory tree.
+func deepClassify(c *classifier.Classifier, info GoModuleInfo) (LicenseInfo, error) {
 	var licenseFiles []string
 	err := filepath.Walk(info.Dir, func(path string, fileInfo os.FileInfo, err error) error {
 		if err != nil {
@@ -102,29 +142,39 @@ func (s *State) deepClassify(info *GoModuleInfo) ([]LicenseInfo, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("walking the tree starting at '%s': %w", info.Dir, err)
+		return LicenseInfo{}, fmt.Errorf("walking the tree starting at '%s': %w", info.Dir, err)
 	}
 
-	var licenses []LicenseInfo
+	var candidates []candidate
 	for _, licenseFile := range licenseFiles {
 		content, err := ioutil.ReadFile(licenseFile)
 		if err != nil {
-			return nil, fmt.Errorf("reading license file '%s': %w", licenseFile, err)
+			return LicenseInfo{}, fmt.Errorf("reading license file '%s': %w", licenseFile, err)
 		}
-		matches := s.classifier.Match(content)
-		for _, m := range matches {
-			licenses = append(licenses, LicenseInfo{
-				LibraryName:    info.Path,
-				LibraryVersion: info.Version,
-				LicenseFile:    licenseFile,
-				LicenseType:    licenseType(m.Name),
-				SourceDir:      info.Dir,
-				LinkToLicense:  createLink(info.Path, info.Version, strings.TrimPrefix(licenseFile, info.Dir+"/")),
-				LicenseName:    licenseName(m.Name),
+		for _, m := range c.Match(content) {
+			candidates = append(candidates, candidate{
+				license:    m.Name,
+				confidence: m.Confidence,
+				path:       licenseFile,
 			})
 		}
 	}
-	return licenses, nil
+
+	if len(candidates) == 0 {
+		return LicenseInfo{}, ErrNoLicenseFileFound
+	}
+
+	highest := highestConfidence(candidates)
+
+	return LicenseInfo{
+		LibraryName:    info.Path,
+		LibraryVersion: info.Version,
+		LicenseFile:    highest.path,
+		LicenseType:    licenseType(highest.license),
+		SourceDir:      info.Dir,
+		LinkToLicense:  createLink(info.Path, info.Version, strings.TrimPrefix(highest.path, info.Dir+"/")),
+		LicenseName:    licenseName(highest.license),
+	}, nil
 }
 
 func licenseType(license string) string {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -82,7 +83,6 @@ func (s *State) Init(module string) error {
 		if !viper.GetBool("force") {
 			s.Cleanup()
 			s.Log.Errorf("%s, %s", string(out), err.Error())
-			s.Log.Info("%s failed to build, use --force flag to continue anyway", module)
 			os.Exit(1)
 		}
 	}
@@ -91,7 +91,7 @@ func (s *State) Init(module string) error {
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		s.Cleanup()
-		s.Log.Errorf("%s, %s", string(out), err.Error())
+		s.Log.Errorf("module %s: command 'go mod download' in directory '%s': %s.\nThe stderr/stdout were:\n%s\n. Use --force to ignore.", module, workingDir, string(out), err)
 		os.Exit(1)
 	}
 	return nil
@@ -103,67 +103,65 @@ func (s *State) Cleanup() {
 }
 
 func (s *State) Check(module string) error {
-	info, err := s.GoModInfo(module)
+	info, err := s.GoListSingle(module)
 	if err != nil {
 		return fmt.Errorf("while reading go.mod: %w", err)
 	}
-	licenses, err := s.Classify(info)
+
+	li, err := s.Classify(info)
 	if err != nil {
 		return fmt.Errorf("while classifying %v: %w", info, err)
 	}
-	s.Log.Infof("The following licenses were found:")
-	for _, li := range licenses {
-		s.Log.Infof("%s %s (%s)", li.LicenseFile, li.LicenseName, li.LicenseType)
-	}
+	s.Log.Infof("The following license was found:")
+	s.Log.Infof("%s %s (%s)", li.LicenseFile, li.LicenseName, li.LicenseType)
 	return nil
 }
 
-func (s *State) ListAll() ([]*GoModuleInfo, error) {
-	var allModules []*GoModuleInfo
-	cmd := s.buildCmd("go", "list", "-m", "all")
-	buf := new(bytes.Buffer)
-	cmd.Stdout = buf
-	err := cmd.Run()
+func (s *State) GoListSingle(module string) (GoModuleInfo, error) {
+	modules, err := s.GoList(module)
 	if err != nil {
-		return nil, err
+		return GoModuleInfo{}, err
 	}
-	// discard first line
-	buf.ReadString('\n')
+	if len(modules) != 1 {
+		return GoModuleInfo{}, fmt.Errorf("programmer mistake: Check: a single module was expected to be returned")
+	}
+	return modules[0], nil
+}
+
+// When no module is given, all the modules will be listed.
+func (s *State) GoList(modules ...string) ([]GoModuleInfo, error) {
+	args := []string{"list", "-m", "-json"}
+	args = append(args, modules...)
+	if len(modules) == 0 {
+		args = append(args, "all")
+	}
+	cmd := s.buildCmd("go", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("while running 'go %v': %w", args, err)
+	}
+
+	return parseGoListJsonOutput(out)
+}
+
+// The go list -json command does not return an actual array of json
+// objects. Instead, it "streams" the json objects. This solution is highly
+// inspired from:
+// https://github.com/golang/go/issues/27655#issuecomment-420993215.
+func parseGoListJsonOutput(b []byte) ([]GoModuleInfo, error) {
+	var modules []GoModuleInfo
+	dec := json.NewDecoder(bytes.NewReader(b))
 	for {
-		line, err := buf.ReadString('\n')
-		if err != nil {
+		var m GoModuleInfo
+		if err := dec.Decode(&m); err != nil {
 			if err == io.EOF {
 				break
 			}
-			return nil, err
+			log.Fatalf("reading 'go list -json' output: %v", err)
 		}
-		var mod string
-		if strings.Contains(line, "=>") {
-			replacedMod := strings.Split(line, " => ")[1]
-			mod = strings.Join(strings.Split(strings.TrimSpace(replacedMod), " "), "@")
-		} else {
-			mod = strings.Join(strings.Split(strings.TrimSpace(line), " "), "@")
-		}
-		info, err := s.GoModInfo(mod)
-		if err != nil {
-			return nil, err
-		}
-		allModules = append(allModules, info)
-	}
-	return allModules, nil
-}
 
-func (s *State) GoModInfo(module string) (*GoModuleInfo, error) {
-	cmd := s.buildCmd("go", "list", "-m", "-json", module)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Printf("%s failed\n", module)
-		return nil, err
+		modules = append(modules, m)
 	}
 
-	info := GoModuleInfo{}
-	if err := json.Unmarshal(out, &info); err != nil {
-		return &info, err
-	}
-	return &info, nil
+	return modules, nil
 }
