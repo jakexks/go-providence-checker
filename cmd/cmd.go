@@ -140,7 +140,12 @@ func run(s checker.State, moduleWithTag string) error {
 			}
 		case "restricted":
 			if !strings.HasPrefix(li.LicenseName, "LGPL") {
-				return fmt.Errorf("%s is under a restricted license %s", mod, li.LicenseName)
+				if viper.GetBool("force") {
+					s.Log.Infof("module %s: the license name %s is restricted, cannot continue. Run with --force to ignore.", mod, li.LicenseName)
+					continue
+				} else {
+					return fmt.Errorf("module %s: the license name %s is restricted, cannot continue. Run with --force to ignore.", mod, li.LicenseName)
+				}
 			}
 
 			dstPath := filepath.Join("thirdparty", li.LibraryName)
