@@ -80,8 +80,8 @@ func Execute() {
 }
 
 // The checker state must have been already intialized with Init. The
-// moduleWithTag is of the form "github.com/apache/thrift@v0.13.0".
-func run(s checker.State, moduleWithTag string) error {
+// rootMod is of the form "github.com/apache/thrift@v0.13.0".
+func run(s checker.State, rootMod string) error {
 	gomodEntries, err := s.GoList()
 	if err != nil {
 		return fmt.Errorf("running checker.ListAll: %w", err)
@@ -136,15 +136,15 @@ func run(s checker.State, moduleWithTag string) error {
 			os.MkdirAll(dstPath, 0755)
 			err := dirutil.CopyDirectory(li.SourceDir, dstPath)
 			if err != nil {
-				return fmt.Errorf("while copying dir '%s' into '%s': %w", li.SourceDir, dstPath, err)
+				return fmt.Errorf("while copying the source code for the dependency '%s' due to the reprocical license %s, copying '%s' into '%s': %w", mod, li.LicenseName, li.SourceDir, dstPath, err)
 			}
 		case "restricted":
 			if !strings.HasPrefix(li.LicenseName, "LGPL") {
 				if viper.GetBool("force") {
-					s.Log.Infof("module %s: the license name %s is restricted, cannot continue. Run with --force to ignore.", mod, li.LicenseName)
+					s.Log.Infof("module %s: the license %s is restricted but is not LGPL, cannot continue. Run with --force to ignore.", mod, li.LicenseName)
 					continue
 				} else {
-					return fmt.Errorf("module %s: the license name %s is restricted, cannot continue. Run with --force to ignore.", mod, li.LicenseName)
+					return fmt.Errorf("module %s: the license %s is restricted but is not LGPL, cannot continue. Run with --force to ignore.", mod, li.LicenseName)
 				}
 			}
 
@@ -153,12 +153,15 @@ func run(s checker.State, moduleWithTag string) error {
 			os.MkdirAll(dstPath, 0755)
 			err := dirutil.CopyDirectory(li.SourceDir, dstPath)
 			if err != nil {
-				return fmt.Errorf("while copying dir '%s' into '%s': %w", li.SourceDir, dstPath, err)
+				return fmt.Errorf("while copying the root's source code for the dependency '%s' due to its restricted license %s: copying dir '%s' into '%s': %w", mod, li.LicenseName, li.SourceDir, dstPath, err)
 			}
 
-			info, err := s.GoListSingle(moduleWithTag)
+			// We need to copy the source code of the module given by the
+			// user, since this restricted dependency requires source code
+			// to be distributed.
+			info, err := s.GoListSingle(rootMod)
 			if err != nil {
-				return fmt.Errorf("while fetching info from the go.mod of module '%s': %w", moduleWithTag, err)
+				return fmt.Errorf("while copying the root's source code for the dependency '%s' due to its restricted license %s: while go listing '%s': %w", mod, li.LicenseName, mod, err)
 			}
 
 			if _, found := seen["LGPL"]; found {
@@ -175,7 +178,7 @@ func run(s checker.State, moduleWithTag string) error {
 
 			err = dirutil.CopyDirectory(info.Dir, dstPath)
 			if err != nil {
-				return fmt.Errorf("while copying dir of '%s' into '%s': %w", li.SourceDir, dstPath, err)
+				return fmt.Errorf("while copying the root's source code for the dependency '%s' due to its restricted license %s: while copying dir '%s' into '%s': %w", mod, li.LicenseName, li.SourceDir, dstPath, err)
 			}
 		}
 	}
