@@ -49,6 +49,7 @@ func (s *State) Classify(info GoModuleInfo) (LicenseInfo, error) {
 		return LicenseInfo{}, err
 	}
 
+	s.Log.Infof("%s: google/licenseclassifier did not find anything either", info.Path)
 	return LicenseInfo{}, ErrNoLicenseFileFound
 }
 

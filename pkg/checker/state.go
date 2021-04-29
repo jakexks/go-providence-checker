@@ -23,6 +23,10 @@ type State struct {
 }
 
 func (s *State) Init(module string) error {
+	if !viper.GetBool("force") {
+		defer s.Cleanup()
+	}
+
 	var opts []zap.Option
 	if viper.GetBool("debug") {
 		opts = append(opts, zap.IncreaseLevel(zap.DebugLevel))
@@ -34,15 +38,6 @@ func (s *State) Init(module string) error {
 	}
 	s.Log = logger.Sugar()
 
-	s.classifier = classifier.NewClassifier(0.2)
-	err = s.classifier.LoadLicenses("./licenses")
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("the folder ./licenses is missing, download it with:\n  curl -L https://github.com/google/licenseclassifier/archive/refs/tags/v2.0.0-alpha.1.tar.gz | tar xz && mv licenseclassifier-*/licenses .")
-	case err != nil:
-		return fmt.Errorf("loading licenses from './licenses': %w", err)
-	}
-
 	c := exec.Command("go", "env", "GOPATH")
 	bytes, err := c.Output()
 	if err != nil {
@@ -50,7 +45,6 @@ func (s *State) Init(module string) error {
 	}
 	s.goPath = strings.TrimSpace(string(bytes))
 
-	s.Log.Info("Creating Temporary Directories")
 	goCache, err := newTempDir()
 	if err != nil {
 		return fmt.Errorf("creating temp dir for storing the temporary GOPATH: %w", err)
@@ -62,12 +56,7 @@ func (s *State) Init(module string) error {
 	}
 	s.workingDir = workingDir
 
-	s.Log.Infof("Downloading %s", module)
-	// Best effort to download modules
-	cmd := s.buildCmd("go", "get", module)
-	_, _ = cmd.CombinedOutput()
 	modSplit := strings.Split(module, "@")
-
 	// When the module that is given to go-providence-checker has "replace"
 	// directives in its go.mod, such as:
 	//
@@ -77,23 +66,42 @@ func (s *State) Init(module string) error {
 	// work around that, the only way is to actually clone the repo. The
 	// guesswork we do to find the HTTPS URL may not always work since we mainly
 	// wanted it to work for publicly hosted GitHub repos.
-	cmd = s.buildCmd("git", "clone", "https://"+modSplit[0], "-b", modSplit[1], "./")
+	url := "https://" + modSplit[0]
+	s.Log.Infof("cloning %s into the working dir '%s'", url, s.workingDir)
+	cmd := s.buildCmd("git", "clone", url, "--branch", modSplit[1], "./")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if !viper.GetBool("force") {
-			s.Cleanup()
 			s.Log.Errorf("%s, %s", string(out), err.Error())
 			os.Exit(1)
 		}
 	}
+
+	s.Log.Info("downloading transitive dependencies")
 	cmd = s.buildCmd("go", "mod", "download")
-	s.Log.Info("Downloading transitive dependencies")
 	out, err = cmd.CombinedOutput()
 	if err != nil {
-		s.Cleanup()
-		s.Log.Errorf("module %s: command 'go mod download' in directory '%s': %s.\nThe stderr/stdout were:\n%s\n. Use --force to ignore.", module, workingDir, string(out), err)
+		s.Log.Errorf("module %s: command 'go mod download' in directory '%s': %s.\nThe stderr and stdout were:\n%s\n. Use --force to ignore.", module, workingDir, string(out), err)
 		os.Exit(1)
 	}
+
+	// The licenseclassifier needs the ./licenses folder to be able to
+	// classify licenses. It is available at
+	// https://github.com/google/licenseclassifier, but we can just use the
+	// Go Module cache for that.
+	googleclassifier, err := s.GoDownload("github.com/google/licenseclassifier@bb04aff29e72")
+	if googleclassifier.Dir == "" {
+		return fmt.Errorf("'go mod download -json github.com/google/licenseclassifier@bb04aff29e72 did not return a Dir field. It returned: %#v", googleclassifier)
+	}
+	s.classifier = classifier.NewClassifier(0.2)
+	s.classifier.LoadLicenses(googleclassifier.Dir + "/licenses")
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("the folder 'licenses' is unexpectedly missing from '%s'", googleclassifier.Dir)
+	case err != nil:
+		return fmt.Errorf("loading licenses from '%s/licenses': %w", googleclassifier.Dir, err)
+	}
+
 	return nil
 }
 
@@ -125,6 +133,26 @@ func (s *State) GoListSingle(module string) (GoModuleInfo, error) {
 	if len(modules) != 1 {
 		return GoModuleInfo{}, fmt.Errorf("programmer mistake: Check: a single module was expected to be returned")
 	}
+	return modules[0], nil
+}
+
+func (s *State) GoDownload(module string) (GoModuleInfo, error) {
+	args := []string{"mod", "download", "-json"}
+	args = append(args, module)
+	cmd := s.buildCmd("go", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return GoModuleInfo{}, fmt.Errorf("while running 'go %v': %w", args, err)
+	}
+
+	modules, err := parseGoListJsonOutput(out)
+	if err != nil {
+		return GoModuleInfo{}, fmt.Errorf("parsing the output of 'go %v': %w", args, err)
+	}
+	if len(modules) != 1 {
+		return GoModuleInfo{}, fmt.Errorf("programmer mistake: Check: a single module was expected to be returned")
+	}
+
 	return modules[0], nil
 }
 

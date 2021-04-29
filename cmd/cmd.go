@@ -97,10 +97,10 @@ func run(s checker.State, moduleWithTag string) error {
 		switch {
 		case err == checker.ErrNoLicenseFileFound:
 			if viper.GetBool("force") {
-				s.Log.Infof("module %s@%s: no license file found in the directory '%s'", entry.Path, entry.Version, entry.GoMod)
+				s.Log.Infof("module %s@%s: no license file found in the directory '%s'", entry.Path, entry.Version, entry.Dir)
 				continue
 			} else {
-				return fmt.Errorf("module %s@%s: no license file found in the directory '%s'. Run with --force to ignore.", entry.Path, entry.Version, entry.GoMod)
+				return fmt.Errorf("module %s@%s: no license file found in the directory '%s'. Run with --force to ignore.", entry.Path, entry.Version, entry.Dir)
 			}
 		case err != nil:
 			fmt.Printf("module %s@%s: no license detected, check + add manually\n", entry.Path, entry.Version)
