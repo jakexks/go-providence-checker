@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	classifier "github.com/google/licenseclassifier/v2"
+	"github.com/jakexks/go-providence-checker/pkg/dirutil"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -22,7 +23,8 @@ type State struct {
 	goPath, goCache, workingDir string
 }
 
-func (s *State) Init(module string) error {
+// rootMod is of the form "github.com/apache/thrift@v0.13.0".
+func (s *State) Init(rootMod string) error {
 	if !viper.GetBool("force") {
 		defer s.Cleanup()
 	}
@@ -56,7 +58,6 @@ func (s *State) Init(module string) error {
 	}
 	s.workingDir = workingDir
 
-	modSplit := strings.Split(module, "@")
 	// When the module that is given to go-providence-checker has "replace"
 	// directives in its go.mod, such as:
 	//
@@ -66,22 +67,22 @@ func (s *State) Init(module string) error {
 	// work around that, the only way is to actually clone the repo. The
 	// guesswork we do to find the HTTPS URL may not always work since we mainly
 	// wanted it to work for publicly hosted GitHub repos.
-	url := "https://" + modSplit[0]
-	s.Log.Infof("cloning %s into the working dir '%s'", url, s.workingDir)
-	cmd := s.buildCmd("git", "clone", url, "--branch", modSplit[1], "./")
-	out, err := cmd.CombinedOutput()
+
+	s.Log.Infof("dowloading root module %s into dir %s", rootMod, s.workingDir)
+	rootGoMod, err := s.GoDownload(rootMod)
 	if err != nil {
-		if !viper.GetBool("force") {
-			s.Log.Errorf("%s, %s", string(out), err.Error())
-			os.Exit(1)
-		}
+		return fmt.Errorf("could not download the root module %s: %w", rootMod, err)
+	}
+	err = dirutil.CopyDirectory(rootGoMod.Dir, workingDir)
+	if err != nil {
+		return fmt.Errorf("could not copy the root module's dir '%s' into '%s': %w", rootGoMod.Dir, s.workingDir, err)
 	}
 
 	s.Log.Info("downloading transitive dependencies")
-	cmd = s.buildCmd("go", "mod", "download")
-	out, err = cmd.CombinedOutput()
+	cmd := s.buildCmd("go", "mod", "download")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		s.Log.Errorf("module %s: command 'go mod download' in directory '%s': %s.\nThe stderr and stdout were:\n%s\n. Use --force to ignore.", module, workingDir, string(out), err)
+		s.Log.Errorf("module %s: command 'go mod download' in directory '%s': %s.\nThe stderr and stdout were:\n%s\n. Use --force to ignore.", rootMod, workingDir, string(out), err)
 		os.Exit(1)
 	}
 

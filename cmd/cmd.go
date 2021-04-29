@@ -153,15 +153,15 @@ func run(s checker.State, rootMod string) error {
 			os.MkdirAll(dstPath, 0755)
 			err := dirutil.CopyDirectory(li.SourceDir, dstPath)
 			if err != nil {
-				return fmt.Errorf("while copying the root's source code for the dependency '%s' due to its restricted license %s: copying dir '%s' into '%s': %w", mod, li.LicenseName, li.SourceDir, dstPath, err)
+				return fmt.Errorf("while copying the root's source code (%s) due to the restricted license %s of the dependency '%s': copying dir '%s' into '%s': %w", rootMod, li.LicenseName, mod, li.SourceDir, dstPath, err)
 			}
 
 			// We need to copy the source code of the module given by the
 			// user, since this restricted dependency requires source code
 			// to be distributed.
-			info, err := s.GoListSingle(rootMod)
+			rootModInfo, err := s.GoDownload(rootMod)
 			if err != nil {
-				return fmt.Errorf("while copying the root's source code for the dependency '%s' due to its restricted license %s: while go listing '%s': %w", mod, li.LicenseName, mod, err)
+				return fmt.Errorf("while copying the root's source code (%s) due to the restricted license %s of the dependency '%s': while go listing '%s': %w", rootMod, li.LicenseName, mod, mod, err)
 			}
 
 			if _, found := seen["LGPL"]; found {
@@ -169,16 +169,16 @@ func run(s checker.State, rootMod string) error {
 			}
 			seen["LGPL"] = struct{}{}
 
-			dstPath = filepath.Join("firstparty", info.Path)
+			dstPath = filepath.Join("firstparty", rootModInfo.Path)
 
 			err = os.MkdirAll(dstPath, 0755)
 			if err != nil {
 				return fmt.Errorf("mkdir -p %s: %w", dstPath, err)
 			}
 
-			err = dirutil.CopyDirectory(info.Dir, dstPath)
+			err = dirutil.CopyDirectory(rootModInfo.Dir, dstPath)
 			if err != nil {
-				return fmt.Errorf("while copying the root's source code for the dependency '%s' due to its restricted license %s: while copying dir '%s' into '%s': %w", mod, li.LicenseName, li.SourceDir, dstPath, err)
+				return fmt.Errorf("while copying the root's source code (%s) due to the restricted license %s of the dependency '%s': while copying dir '%s' into '%s': %w", rootMod, li.LicenseName, mod, li.SourceDir, dstPath, err)
 			}
 		}
 	}
