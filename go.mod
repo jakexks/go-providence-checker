@@ -3,9 +3,10 @@ module github.com/jakexks/go-providence-checker
 go 1.16
 
 require (
+	github.com/alessio/shellescape v1.4.1
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/go-enry/go-license-detector/v4 v4.1.1
-	github.com/google/licenseclassifier v0.0.0-20190926221455-842c0d70d702
+	github.com/google/licenseclassifier v0.0.0-20210325184830-bb04aff29e72
 	github.com/google/licenseclassifier/v2 v2.0.0-alpha.1
 	github.com/smartystreets/assertions v1.2.0 // indirect
 	github.com/spf13/afero v1.2.2 // indirect
